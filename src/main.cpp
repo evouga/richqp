@@ -6,11 +6,26 @@
 
 #include "optimization.h"
 
-int main(int argc, char *argv[])
+void runOptimization(alglib::minqpstate &state, int nvars, double totalBudget)
 {
-    if (argc != 5)
+    alglib::real_2d_array c;
+    c.setlength(1, nvars + 1);
+    for (int i = 0; i < nvars; i++)
     {
-        std::cerr << "Usage: richqp (budget) (betas file) (incomes file) (output aid file)" << std::endl;
+        c[0][i] = 1.0;        
+    }
+    c[0][nvars] = totalBudget;
+    alglib::integer_1d_array ct = "[-1]";
+    alglib::minqpsetlc(state, c, ct);
+
+    alglib::minqpoptimize(state);
+}
+
+int main(int argc, char *argv[])
+{    
+    if (argc != 7)
+    {
+        std::cerr << "Usage: richqp (budget) (betas file) (incomes file) (actual aids file) (output optimal aid file) (output equal-outcome aids file)" << std::endl;
         return -1;
     }        
     double budget = std::strtod(argv[1], NULL);
@@ -70,14 +85,43 @@ int main(int argc, char *argv[])
     int nvars = incomes.size();
     std::cout << "Read " << nvars << " incomes" << std::endl;
 
-    std::ofstream aidsfile(argv[4]);
-    if (!aidsfile)
+
+    std::vector<double> actualaids;
+    std::ifstream actualaidsfile(argv[4]);
+    if (!actualaidsfile)
     {
-        std::cerr << "Couldn't open output aids file " << argv[4] << std::endl;
+        std::cerr << "Couldn't open actual aids file: " << argv[4] << std::endl;
         return -1;
     }
 
-    
+    while (true)
+    {
+        double val;
+        actualaidsfile >> val;
+        if (!actualaidsfile)
+            break;
+        actualaids.push_back(val);
+    }
+    if (actualaids.size() != nvars)
+    {
+        std::cerr << "Number of aids values (" << actualaids.size() << ") does not match number of incomes (" << nvars << ")!" << std::endl;
+        return -1;
+    }
+
+
+    std::ofstream aidsfile(argv[5]);
+    if (!aidsfile)
+    {
+        std::cerr << "Couldn't open output optimal aids file " << argv[5] << std::endl;
+        return -1;
+    }
+
+    std::ofstream equalaidsfile(argv[6]);
+    if (!aidsfile)
+    {
+        std::cerr << "Couldn't open output equal-outcome aids file " << argv[6] << std::endl;
+        return -1;
+    }
 
     bool posdef = true;
     
@@ -86,6 +130,7 @@ int main(int argc, char *argv[])
 
     alglib::sparsematrix a;
     alglib::sparsecreate(nvars, nvars, 0, a);
+    std::vector<double> quadcoeffs(nvars);
     for (int i = 0; i < nvars; i++)
     {
         double incterm = 1.0;
@@ -98,6 +143,7 @@ int main(int argc, char *argv[])
         if (coeff < 0)
             posdef = false;
         alglib::sparseset(a, i, i, coeff);
+        quadcoeffs[i] = 0.5 * coeff;
     }
     alglib::minqpsetquadratictermsparse(state, a, true);
 
@@ -121,6 +167,17 @@ int main(int argc, char *argv[])
     }
     alglib::minqpsetlinearterm(state, b);
 
+    double constterm = 0;
+    for (int i = 0; i < nvars; i++)
+    {
+        double incterm = 1.0;
+        for (auto beta : betas[1])
+        {
+            constterm += -1.0 * incterm * beta;
+            incterm *= incomes[i];
+        }        
+    }
+    
     alglib::real_1d_array lb;
     alglib::real_1d_array ub;
     lb.setlength(nvars);
@@ -132,35 +189,66 @@ int main(int argc, char *argv[])
     }
     alglib::minqpsetbc(state, lb, ub);
 
-    alglib::real_2d_array c;
-    c.setlength(1, nvars + 1);
-    for (int i = 0; i < nvars; i++)
-    {
-        c[0][i] = 1.0;        
-    }
-    c[0][nvars] = nvars * budget;
-    alglib::integer_1d_array ct = "[0]";
-    alglib::minqpsetlc(state, c, ct);
-
     alglib::real_1d_array scales;
     scales.setlength(nvars);
     for (int i = 0; i < nvars; i++)
         scales[i] = budget;
 
     alglib::minqpsetscale(state, scales);
-    alglib::minqpsetalgobleic(state, 0, 0, 0, 0);
+    alglib::minqpsetalgobleic(state, 0, 0, 0, 0);    
 
-    alglib::minqpoptimize(state);
+    runOptimization(state, nvars, nvars * budget);
 
     alglib::minqpreport rep;
     alglib::real_1d_array aids;
     alglib::minqpresults(state, aids, rep);
-
-    std::cout << "Terminated in " << rep.outeriterationscount << " iterations, termination code: " << rep.terminationtype << std::endl;
-
+    
+    double totaloptaid = 0;
+    double totalbenefit = constterm;
+    for (int i = 0; i < nvars; i++)
+    {
+        totaloptaid += aids[i];
+        totalbenefit += quadcoeffs[i] * aids[i] * aids[i] + b[i] * aids[i];
+    }
+    std::cout << "Optimal aid allocation (with maximum total budget " << nvars*budget << ") uses total budget " << totaloptaid << " and yields benefit " << -totalbenefit << std::endl;
+    
     for (int i = 0; i < nvars; i++)
     {
         aidsfile << aids[i] << std::endl;
+    }
+
+
+    double actualtotalaid = 0;
+    double actualbenefit = constterm;
+    for (int i = 0; i < nvars; i++)
+    {
+        actualtotalaid += actualaids[i];
+        actualbenefit += quadcoeffs[i] * actualaids[i] * actualaids[i] + b[i] * actualaids[i];
+    }
+    std::cout << "Actual aid allocation uses total budget " << actualtotalaid << " and yields benefit " << -actualbenefit << std::endl;
+
+    double low = 0;
+    double high = actualtotalaid;
+    while (high - low > 1e-6)
+    {
+        double mid = 0.5 * (low + high);
+        runOptimization(state, nvars, mid);
+        alglib::minqpresults(state, aids, rep);
+        double newbenefit = constterm;
+        for (int i = 0; i < nvars; i++)
+        {            
+            newbenefit += quadcoeffs[i] * aids[i] * aids[i] + b[i] * aids[i];
+        }
+        if (newbenefit <= actualbenefit)
+            high = mid;
+        else
+            low = mid;
+    }
+    std::cout << "Optimal total budget needed to get benefit " << -actualbenefit << " is " << high << std::endl;
+
+    for (int i = 0; i < nvars; i++)
+    {
+        equalaidsfile << aids[i] << std::endl;
     }
 
     return 0;
