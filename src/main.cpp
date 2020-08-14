@@ -23,9 +23,9 @@ void runOptimization(alglib::minqpstate &state, int nvars, double totalBudget)
 
 int main(int argc, char *argv[])
 {    
-    if (argc != 7)
+    if (argc != 8)
     {
-        std::cerr << "Usage: richqp (budget) (betas file) (incomes file) (actual aids file) (output optimal aid file) (output equal-outcome aids file)" << std::endl;
+        std::cerr << "Usage: richqp (budget) (betas file) (incomes file) (actual aids file) (output optimal government aid file) (output optimal university aid file) (output equal-outcome aids file)" << std::endl;
         return -1;
     }        
     double budget = std::strtod(argv[1], NULL);
@@ -109,17 +109,24 @@ int main(int argc, char *argv[])
     }
 
 
-    std::ofstream aidsfile(argv[5]);
-    if (!aidsfile)
+    std::ofstream govaidsfile(argv[5]);
+    if (!govaidsfile)
     {
-        std::cerr << "Couldn't open output optimal aids file " << argv[5] << std::endl;
+        std::cerr << "Couldn't open output optimal government aids file " << argv[5] << std::endl;
         return -1;
     }
 
-    std::ofstream equalaidsfile(argv[6]);
-    if (!aidsfile)
+    std::ofstream uniaidsfile(argv[6]);
+    if (!uniaidsfile)
     {
-        std::cerr << "Couldn't open output equal-outcome aids file " << argv[6] << std::endl;
+        std::cerr << "Couldn't open output optimal university aids file " << argv[6] << std::endl;
+        return -1;
+    }
+
+    std::ofstream equalaidsfile(argv[7]);
+    if (!equalaidsfile)
+    {
+        std::cerr << "Couldn't open output equal-outcome aids file " << argv[7] << std::endl;
         return -1;
     }
 
@@ -210,11 +217,17 @@ int main(int argc, char *argv[])
         totaloptaid += aids[i];
         totalbenefit += quadcoeffs[i] * aids[i] * aids[i] + b[i] * aids[i];
     }
-    std::cout << "Optimal aid allocation (with maximum total budget " << nvars*budget << ") uses total budget " << totaloptaid << " and yields benefit " << -totalbenefit << std::endl;
+
+    if (std::fabs(totaloptaid - nvars * budget) > 1e-4)
+    {
+        std::cerr << "Warning: optimal aid allocation does not use the full allowed budget" << std::endl;
+    }
+
+    std::cout << "Optimal aid allocation (with government maximum budget " << nvars*budget << ") yields benefit " << -totalbenefit << std::endl;
     
     for (int i = 0; i < nvars; i++)
     {
-        aidsfile << aids[i] << std::endl;
+        govaidsfile << aids[i] << std::endl;
     }
 
 
@@ -226,6 +239,20 @@ int main(int argc, char *argv[])
         actualbenefit += quadcoeffs[i] * actualaids[i] * actualaids[i] + b[i] * actualaids[i];
     }
     std::cout << "Actual aid allocation uses total budget " << actualtotalaid << " and yields benefit " << -actualbenefit << std::endl;
+
+
+    runOptimization(state, nvars, actualtotalaid);
+    alglib::minqpresults(state, aids, rep);
+    double unibenefit = constterm;
+    for (int i = 0; i < nvars; i++)
+    {
+        unibenefit += quadcoeffs[i] * aids[i] * aids[i] + b[i] * aids[i];
+    }
+    std::cout << "Optimal aid allocation (with university maximum budget " << actualtotalaid << ") yields benefit " << -unibenefit << std::endl;
+    for (int i = 0; i < nvars; i++)
+    {
+        uniaidsfile << aids[i] << std::endl;
+    }
 
     double low = 0;
     double high = actualtotalaid;
