@@ -23,9 +23,9 @@ void runOptimization(alglib::minqpstate &state, int nvars, double totalBudget)
 
 int main(int argc, char *argv[])
 {    
-    if (argc != 8)
+    if (argc != 9)
     {
-        std::cerr << "Usage: richqp (budget) (betas file) (incomes file) (actual aids file) (output optimal government aid file) (output optimal university aid file) (output equal-outcome aids file)" << std::endl;
+        std::cerr << "Usage: richqp (budget) (betas file) (incomes file) (actual aids file) (abilities file) (output optimal government aid file) (output optimal university aid file) (output equal-outcome aids file)" << std::endl;
         return -1;
     }        
     double budget = std::strtod(argv[1], NULL);
@@ -36,9 +36,9 @@ int main(int argc, char *argv[])
         return -1;
     }
 
-    std::vector<double> betas[3];
+    std::vector<double> betas[6];
     
-    for (int i = 0; i < 3 && betasfile; i++)
+    for (int i = 0; i < 6 && betasfile; i++)
     {
         std::string betaline;
         std::getline(betasfile, betaline);
@@ -59,7 +59,7 @@ int main(int argc, char *argv[])
         std::cout << "Read " << betacnt << " betas from line " << i << std::endl;
     }
 
-    if (betas[2].size() == 0)
+    if (betas[2].size() == 0 && betas[5].size() == 0)
     {
         std::cerr << "Need at least one quadratic term in the objective function!" << std::endl;
         return -1;
@@ -79,7 +79,7 @@ int main(int argc, char *argv[])
         incomesfile >> val;
         if (!incomesfile)
             break;
-        incomes.push_back(val);
+        incomes.push_back(val);        
     }
 
     int nvars = incomes.size();
@@ -108,25 +108,47 @@ int main(int argc, char *argv[])
         return -1;
     }
 
+    std::vector<double> abilities;
+    std::ifstream abilitiesfile(argv[5]);
+    if (!abilitiesfile)
+    {
+        std::cerr << "Couldn't open abilities file: " << argv[5] << std::endl;
+        return -1;
+    }
 
-    std::ofstream govaidsfile(argv[5]);
+    while (true)
+    {
+        double val;
+        abilitiesfile >> val;
+        if (!abilitiesfile)
+            break;
+        abilities.push_back(val);
+    }
+    if (abilities.size() != nvars)
+    {
+        std::cerr << "Number of abilities values (" << abilities.size() << ") does not match number of incomes (" << nvars << ")!" << std::endl;
+        return -1;
+    }
+
+
+    std::ofstream govaidsfile(argv[6]);
     if (!govaidsfile)
     {
-        std::cerr << "Couldn't open output optimal government aids file " << argv[5] << std::endl;
+        std::cerr << "Couldn't open output optimal government aids file " << argv[6] << std::endl;
         return -1;
     }
 
-    std::ofstream uniaidsfile(argv[6]);
+    std::ofstream uniaidsfile(argv[7]);
     if (!uniaidsfile)
     {
-        std::cerr << "Couldn't open output optimal university aids file " << argv[6] << std::endl;
+        std::cerr << "Couldn't open output optimal university aids file " << argv[7] << std::endl;
         return -1;
     }
 
-    std::ofstream equalaidsfile(argv[7]);
+    std::ofstream equalaidsfile(argv[8]);
     if (!equalaidsfile)
     {
-        std::cerr << "Couldn't open output equal-outcome aids file " << argv[7] << std::endl;
+        std::cerr << "Couldn't open output equal-outcome aids file " << argv[8] << std::endl;
         return -1;
     }
 
@@ -147,6 +169,13 @@ int main(int argc, char *argv[])
             coeff += -2.0 * incterm * beta;
             incterm *= incomes[i];
         }
+        incterm = 1.0;
+        for (auto beta : betas[5])
+        {
+            coeff += -2.0 * incterm * beta * abilities[i];
+            incterm *= incomes[i];
+        }
+
         if (coeff < 0)
             posdef = false;
         alglib::sparseset(a, i, i, coeff);
@@ -170,6 +199,12 @@ int main(int argc, char *argv[])
             coeff += -1.0 * incterm * beta;
             incterm *= incomes[i];
         }
+        incterm = 1.0;
+        for (auto beta : betas[4])
+        {
+            coeff += -1.0 * incterm * beta * abilities[i];
+            incterm *= incomes[i];
+        }
         b[i] = coeff;
     }
     alglib::minqpsetlinearterm(state, b);
@@ -178,11 +213,17 @@ int main(int argc, char *argv[])
     for (int i = 0; i < nvars; i++)
     {
         double incterm = 1.0;
-        for (auto beta : betas[1])
+        for (auto beta : betas[0])
         {
             constterm += -1.0 * incterm * beta;
             incterm *= incomes[i];
-        }        
+        }  
+        incterm = 1.0;
+        for (auto beta : betas[3])
+        {
+            constterm += -1.0 * incterm * beta * abilities[i];
+            incterm *= incomes[i];
+        }
     }
     
     alglib::real_1d_array lb;
